@@ -171,6 +171,53 @@ When deploying in production, consider:
 - **Seccomp profile:** See [deploy/seccomp/](deploy/seccomp/) for a strict seccomp profile that blocks exec syscalls.
 - **Service token:** Set `SERVICE_TOKEN_PATH` to require Bearer auth on the reload endpoint.
 
+## Multi-host deployment
+
+By default, agent-tool-firewall binds to `127.0.0.1:8475` (localhost only). This is intentional: in appliance mode, only local processes should reach the firewall. **Never expose the firewall directly to untrusted networks.**
+
+For multi-host deployments where the LLM agent runs on a different machine than the firewall, place agent-tool-firewall behind a reverse proxy that terminates mTLS (mutual TLS). This ensures:
+
+- **Encryption in transit** -- tool call data and bearer tokens are not sent in cleartext.
+- **Client authentication** -- only agents with a valid client certificate can reach the firewall.
+- **Network segmentation** -- the firewall process itself never handles TLS, keeping its attack surface minimal.
+
+### Example: nginx mTLS termination
+
+```nginx
+upstream tool_firewall {
+    server 127.0.0.1:8475;
+}
+
+server {
+    listen 8476 ssl;
+
+    # Server certificate and key
+    ssl_certificate     /etc/nginx/certs/server.crt;
+    ssl_certificate_key /etc/nginx/certs/server.key;
+
+    # Require client certificates (mTLS)
+    ssl_client_certificate /etc/nginx/certs/ca.crt;
+    ssl_verify_client on;
+
+    # TLS hardening
+    ssl_protocols TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    location / {
+        proxy_pass http://tool_firewall;
+        proxy_set_header X-Client-DN $ssl_client_s_dn;
+        proxy_set_header X-Forwarded-For $remote_addr;
+
+        # Restrict request body size
+        client_max_body_size 64k;
+    }
+}
+```
+
+With this setup, the agent connects to `https://<firewall-host>:8476` with its client certificate, and nginx forwards validated requests to the firewall on localhost.
+
+For Envoy, the equivalent configuration uses `transport_socket` with `require_client_certificate: true` in the downstream TLS context.
+
 ## Integration with SecAI OS
 
 agent-tool-firewall is used as a core component of [SecAI OS](https://github.com/SecAI-Hub/SecAI_OS), a bootable local-first AI appliance. In that context it runs as a systemd service with strict sandboxing, seccomp filtering, and no network access.

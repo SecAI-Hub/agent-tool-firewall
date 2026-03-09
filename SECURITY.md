@@ -14,8 +14,17 @@ If you discover a security vulnerability in agent-tool-firewall, please report i
 | Stage | Target |
 |---|---|
 | Acknowledgement | 48 hours |
-| Triage and severity assessment | 7 days |
-| Fix for Critical/High | 90 days |
+| Triage and severity assessment | 5 business days |
+| Fix for Critical | 7 days |
+| Fix for High | 30 days |
+| Fix for Medium/Low | 90 days |
+
+## Disclosure expectations
+
+- **Acknowledgement:** You will receive an acknowledgement within **48 hours** of your report confirming receipt.
+- **Critical fixes:** Critical severity vulnerabilities (e.g., policy bypass, authentication bypass) will be patched within **7 days** of confirmation.
+- **Coordinated disclosure:** We follow coordinated disclosure. We ask reporters to avoid public disclosure until a fix is available and a reasonable disclosure window (typically 90 days) has passed.
+- **Credit:** Security researchers will be credited in the release notes and CHANGELOG unless they request anonymity.
 
 ## Scope
 
@@ -36,4 +45,11 @@ If you discover a security vulnerability in agent-tool-firewall, please report i
 
 ## Supported versions
 
-Only the latest release on the `main` branch is supported with security fixes.
+| Version | Supported |
+|---|---|
+| latest `main` | Yes — security fixes |
+| v0.1.x | Yes — security fixes |
+| < v0.1.0 | No |
+
+Only the latest release on the `main` branch receives security fixes.
+Pre-release builds and older tags are not supported.
