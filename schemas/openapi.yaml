@@ -1,0 +1,150 @@
+openapi: "3.0.3"
+info:
+  title: agent-tool-firewall API
+  version: "1.0.0"
+  description: >
+    Default-deny policy gateway for LLM/agent tool calls.
+    Evaluates tool invocations against a YAML policy with path validation,
+    argument filtering, rate limiting, and structured audit logging.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://127.0.0.1:8475
+    description: Local development
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      tags: [monitoring]
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+                  total_requests:
+                    type: integer
+                    example: 1024
+                  denied_requests:
+                    type: integer
+                    example: 37
+
+  /v1/evaluate:
+    post:
+      summary: Evaluate a tool call against policy
+      operationId: evaluateToolCall
+      tags: [policy]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ToolCallRequest"
+      responses:
+        "200":
+          description: Evaluation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToolCallResponse"
+        "400":
+          description: Invalid request body
+        "405":
+          description: Method not allowed (only POST accepted)
+
+  /v1/stats:
+    get:
+      summary: Aggregated security statistics
+      operationId: getStats
+      tags: [monitoring]
+      responses:
+        "200":
+          description: Statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  default_action:
+                    type: string
+                    example: "deny"
+                  allowed_tools:
+                    type: integer
+                    example: 3
+                  denied_tools:
+                    type: integer
+                    example: 4
+                  total_requests:
+                    type: integer
+                    example: 1024
+                  denied_requests:
+                    type: integer
+                    example: 37
+
+  /v1/reload:
+    post:
+      summary: Hot-reload policy file
+      operationId: reloadPolicy
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Policy reloaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "reloaded"
+        "403":
+          description: Invalid or missing service token
+        "500":
+          description: Policy reload failed
+
+components:
+  schemas:
+    ToolCallRequest:
+      type: object
+      required: [tool]
+      properties:
+        tool:
+          type: string
+          description: Tool identifier
+          example: "filesystem.read"
+        params:
+          type: object
+          additionalProperties:
+            type: string
+          description: Tool parameters (key-value pairs)
+          example:
+            path: "/home/user/documents/notes.txt"
+
+    ToolCallResponse:
+      type: object
+      required: [allowed]
+      properties:
+        allowed:
+          type: boolean
+          description: Whether the tool call is permitted
+        reason:
+          type: string
+          description: Reason for denial (only present when denied)
+          example: "tool not in allowlist"
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Service-to-service token (loaded from SERVICE_TOKEN_PATH)

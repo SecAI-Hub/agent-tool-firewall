@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://secai-hub.github.io/agent-tool-firewall/schemas/policy.schema.json",
+  "title": "agent-tool-firewall Policy",
+  "description": "JSON Schema for the agent-tool-firewall policy YAML file.",
+  "type": "object",
+  "required": ["version", "tools"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "description": "Schema version number.",
+      "minimum": 1
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Optional global defaults.",
+      "additionalProperties": false,
+      "properties": {
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "runtime_egress": {
+              "type": "string",
+              "enum": ["deny", "allow"]
+            }
+          }
+        },
+        "logging": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "store_raw_prompts": {
+              "type": "boolean",
+              "default": false
+            },
+            "store_raw_responses": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      }
+    },
+    "tools": {
+      "type": "object",
+      "description": "Tool firewall policy.",
+      "required": ["default"],
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "type": "string",
+          "enum": ["deny", "allow"],
+          "description": "Default action for unlisted tools."
+        },
+        "rate_limit": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "requests_per_minute": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 120
+            },
+            "burst_size": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 20
+            }
+          }
+        },
+        "allow": {
+          "type": "array",
+          "description": "Tools explicitly allowed.",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Tool identifier."
+              },
+              "paths_allowlist": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Glob patterns for allowed paths. Trailing /** for recursive."
+              },
+              "paths_denylist": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Glob patterns for denied paths (checked before allowlist)."
+              },
+              "args_blocklist": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Substrings that cause an argument to be rejected."
+              },
+              "max_arg_length": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 4096,
+                "description": "Maximum length for any single argument value."
+              }
+            }
+          }
+        },
+        "deny": {
+          "type": "array",
+          "description": "Tools explicitly denied. Deny always wins.",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

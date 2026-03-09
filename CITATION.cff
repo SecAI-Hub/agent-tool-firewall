@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+title: agent-tool-firewall
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - name: "SecAI-Hub Contributors"
+repository-code: "https://github.com/SecAI-Hub/agent-tool-firewall"
+license: Apache-2.0
+keywords:
+  - llm-security
+  - agent-safety
+  - tool-firewall
+  - policy-engine
+  - default-deny
+  - ai-safety
+  - mcp-gateway
+  - rate-limiting
+  - audit-logging
+date-released: "2026-03-09"
+abstract: "Default-deny policy gateway for LLM/agent tool calls. Evaluates every tool invocation against a YAML policy with path validation, argument filtering, rate limiting, and structured audit logging."

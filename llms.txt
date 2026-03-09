@@ -1,0 +1,50 @@
+# agent-tool-firewall
+
+> Default-deny policy gateway for LLM/agent tool calls.
+
+agent-tool-firewall is a single-binary Go HTTP service that evaluates tool
+invocations against a YAML policy before allowing execution. It sits between
+any AI agent (local LLM, Claude, GPT, MCP server, RAG pipeline) and the tools
+that agent can call.
+
+## What it does
+
+- Evaluates `POST /v1/evaluate` with `{"tool":"name","params":{...}}`
+- Returns `{"allowed": true}` or `{"allowed": false, "reason": "..."}`
+- Policy is a YAML file with allow/deny lists, path constraints, rate limits
+- Audit-logs every decision to JSONL
+
+## Policy model
+
+- Default-deny: tools must be explicitly allowlisted
+- Deny list always wins over allow list
+- Path arguments are canonicalized and checked against allow/deny globs
+- Path traversal (../) and null-byte injection are caught
+- Arguments validated against max-length and blocked-pattern lists
+- Sliding-window rate limiter (default 120 req/min)
+
+## API
+
+- `GET  /health`       — health check + counters
+- `POST /v1/evaluate`  — evaluate a tool call
+- `GET  /v1/stats`     — aggregated stats
+- `POST /v1/reload`    — hot-reload policy (Bearer auth)
+
+## Configuration (env vars)
+
+- BIND_ADDR (default 127.0.0.1:8475)
+- POLICY_PATH (default /etc/secure-ai/policy/policy.yaml)
+- AUDIT_LOG_PATH (default /var/lib/secure-ai/logs/tool-firewall-audit.jsonl)
+- SERVICE_TOKEN_PATH (optional, for /v1/reload auth)
+
+## Use cases
+
+- Local AI assistants, MCP gateways, RAG apps, desktop copilots,
+  CI agent sandboxes, any system where an LLM invokes tools
+
+## Tech
+
+- Go 1.23, single binary, zero CGO, ~500 lines
+- Only dependency: gopkg.in/yaml.v3
+- Container: Alpine-based, runs as non-root (UID 65534)
+- Part of SecAI OS (https://github.com/SecAI-Hub/SecAI_OS)

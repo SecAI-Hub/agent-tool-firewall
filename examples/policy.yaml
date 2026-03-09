@@ -1,0 +1,74 @@
+# =============================================================================
+# agent-tool-firewall Policy Configuration — Annotated Example
+# =============================================================================
+# This file controls which tool calls are allowed, denied, and rate-limited.
+# All settings follow a secure-by-default philosophy:
+#   - Tool calls are default-deny
+#   - Paths must be explicitly allowlisted
+#   - Arguments are validated against length limits and blocked patterns
+# =============================================================================
+
+# Schema version. Used for forward compatibility.
+version: 1
+
+# ---------------------------------------------------------------------------
+# tools — Tool firewall policy
+# ---------------------------------------------------------------------------
+# The tool firewall evaluates every tool call against this section.
+tools:
+  # Default action for tools not in the allow or deny list.
+  # "deny" = reject unknown tools (recommended).
+  # "allow" = allow unknown tools (NOT recommended).
+  default: "deny"
+
+  # Global rate limit across all tool calls.
+  rate_limit:
+    # Maximum tool calls per minute (sliding window).
+    requests_per_minute: 120
+    # Burst size for rate limiting.
+    burst_size: 20
+
+  # Tools explicitly allowed, with constraints.
+  allow:
+    - name: "filesystem.read"
+      # Only allow reading from these directories.
+      paths_allowlist:
+        - "/home/user/documents/**"
+        - "/home/user/projects/**"
+      # Never allow reading these paths, even if they match the allowlist.
+      paths_denylist:
+        - "/etc/shadow"
+        - "/etc/passwd"
+      # Maximum length of any single argument (bytes).
+      max_arg_length: 4096
+
+    - name: "filesystem.write"
+      # Only allow writing to the outputs directory.
+      paths_allowlist:
+        - "/home/user/outputs/**"
+      # Block path traversal and writes to system directories.
+      args_blocklist:
+        - "../"
+        - "/etc/"
+        - "/usr/"
+      max_arg_length: 4096
+
+    - name: "filesystem.list"
+      # Allow listing files in user directories.
+      paths_allowlist:
+        - "/home/user/documents/**"
+        - "/home/user/outputs/**"
+
+    - name: "web.search"
+      # No path constraints — argument filtering only.
+      args_blocklist:
+        - "password"
+        - "secret"
+        - "api_key"
+
+  # Tools explicitly denied. Deny always wins over allow.
+  deny:
+    - name: "shell.exec"       # No shell command execution
+    - name: "process.spawn"    # No process spawning
+    - name: "network.fetch"    # No raw network access
+    - name: "filesystem.delete"  # No file deletion
