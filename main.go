@@ -316,6 +316,36 @@ func validateArgs(params map[string]string, entry ToolEntry) (bool, string) {
 // Core evaluation
 // ---------------------------------------------------------------------------
 
+// checkPathConstraints validates path parameters against allowlist/denylist rules.
+func checkPathConstraints(params map[string]string, entry ToolEntry) (bool, string) {
+	path, ok := params["path"]
+	if !ok || path == "" {
+		return true, ""
+	}
+
+	resolved, err := cleanAndResolvePath(path)
+	if err != nil {
+		return false, "invalid path: " + err.Error()
+	}
+
+	for _, denied := range entry.PathsDenylist {
+		if matchesGlob(resolved, denied) {
+			return false, "path matches denylist"
+		}
+	}
+
+	if len(entry.PathsAllowlist) > 0 {
+		for _, pattern := range entry.PathsAllowlist {
+			if matchesGlob(resolved, pattern) {
+				return true, ""
+			}
+		}
+		return false, "path not in allowlist"
+	}
+
+	return true, ""
+}
+
 func evaluateTool(req ToolCallRequest) ToolCallResponse {
 	pol := getPolicy()
 
@@ -344,38 +374,12 @@ func evaluateTool(req ToolCallRequest) ToolCallResponse {
 			return ToolCallResponse{Allowed: false, Reason: "tool not in allowlist"}
 		}
 
-		// Validate arguments
 		if ok, reason := validateArgs(req.Params, *matched); !ok {
 			return ToolCallResponse{Allowed: false, Reason: reason}
 		}
 
-		// Check path constraints
-		if path, ok := req.Params["path"]; ok && path != "" {
-			resolved, err := cleanAndResolvePath(path)
-			if err != nil {
-				return ToolCallResponse{Allowed: false, Reason: "invalid path: " + err.Error()}
-			}
-
-			// Check denylist first
-			for _, denied := range matched.PathsDenylist {
-				if matchesGlob(resolved, denied) {
-					return ToolCallResponse{Allowed: false, Reason: "path matches denylist"}
-				}
-			}
-
-			// Check allowlist
-			if len(matched.PathsAllowlist) > 0 {
-				pathAllowed := false
-				for _, pattern := range matched.PathsAllowlist {
-					if matchesGlob(resolved, pattern) {
-						pathAllowed = true
-						break
-					}
-				}
-				if !pathAllowed {
-					return ToolCallResponse{Allowed: false, Reason: "path not in allowlist"}
-				}
-			}
+		if ok, reason := checkPathConstraints(req.Params, *matched); !ok {
+			return ToolCallResponse{Allowed: false, Reason: reason}
 		}
 
 		return ToolCallResponse{Allowed: true}
