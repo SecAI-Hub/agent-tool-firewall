@@ -37,10 +37,10 @@ type PolicyDefaults struct {
 }
 
 type ToolsPolicy struct {
-	Default    string      `yaml:"default"`
-	Allow      []ToolEntry `yaml:"allow"`
-	Deny       []ToolEntry `yaml:"deny"`
-	RateLimit  RateConfig  `yaml:"rate_limit"`
+	Default   string      `yaml:"default"`
+	Allow     []ToolEntry `yaml:"allow"`
+	Deny      []ToolEntry `yaml:"deny"`
+	RateLimit RateConfig  `yaml:"rate_limit"`
 }
 
 type ToolEntry struct {
@@ -78,9 +78,9 @@ var (
 	policyMu sync.RWMutex
 	policy   Policy
 
-	auditFile   *os.File
-	auditMu     sync.Mutex
-	auditPath   string
+	auditFile *os.File
+	auditMu   sync.Mutex
+	auditPath string
 
 	// Rate limiting: simple sliding window counter
 	rateMu      sync.Mutex
@@ -95,10 +95,10 @@ var (
 var serviceToken string // loaded at startup; empty = dev mode (no auth)
 
 const (
-	defaultMaxArgLength     = 4096
-	defaultRequestsPerMin   = 120
-	defaultBurstSize        = 20
-	maxRequestBodySize      = 64 * 1024 // 64 KB
+	defaultMaxArgLength   = 4096
+	defaultRequestsPerMin = 120
+	defaultBurstSize      = 20
+	maxRequestBodySize    = 64 * 1024 // 64 KB
 )
 
 // loadServiceToken reads the service-to-service auth token from disk.
@@ -187,11 +187,11 @@ func getPolicy() Policy {
 // ---------------------------------------------------------------------------
 
 type AuditEntry struct {
-	Timestamp string `json:"timestamp"`
-	Tool      string `json:"tool"`
+	Timestamp string            `json:"timestamp"`
+	Tool      string            `json:"tool"`
 	Params    map[string]string `json:"params,omitempty"`
-	Allowed   bool   `json:"allowed"`
-	Reason    string `json:"reason,omitempty"`
+	Allowed   bool              `json:"allowed"`
+	Reason    string            `json:"reason,omitempty"`
 }
 
 func initAuditLog() {

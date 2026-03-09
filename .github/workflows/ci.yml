@@ -39,6 +39,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Format check
+        run: test -z "$(gofmt -l .)"
+
   container:
     name: Container Build
     runs-on: ubuntu-latest
