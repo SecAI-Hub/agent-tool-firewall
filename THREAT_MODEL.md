@@ -97,8 +97,8 @@ agent-tool-firewall is a default-deny policy gateway that sits between an LLM/AI
 
 | Risk | Description | Recommended mitigation |
 |---|---|---|
-| R1: Symlink race conditions | `filepath.Clean`/`filepath.Abs` do not resolve symlinks. A symlink within an allowlisted directory could point outside it. | Mount allowlisted directories with `nosymfollow` or use `filepath.EvalSymlinks` (adds a stat syscall per request). |
-| R2: Unicode normalization | Fullwidth Unicode characters (e.g., `\uff0e\uff0e/` as `../`) are not normalized before path matching. | Add Unicode NFKC normalization before path validation. |
+| R1: Symlink race conditions | Path validation now resolves symlinks for the deepest existing prefix, but a filesystem race could still swap a path between evaluation and tool execution. | Mount allowlisted directories with `nosymfollow` and ensure the executor opens files relative to a trusted directory descriptor. |
+| R2: Unicode / encoded path tricks | Percent-encoded traversal and known Unicode path confusables are rejected before matching; other filesystem-specific canonicalization quirks may still exist. | Keep deny-by-default policies and add platform-specific tests for any new execution environment. |
 | R3: TOCTOU on policy reload | A race between reading the policy file and applying it could lead to inconsistent state. | The current `sync.RWMutex` serializes reads and writes, but file-level TOCTOU remains if the file is modified during read. Use atomic file replacement (rename). |
 | R4: No TLS by default | The firewall listens on plain HTTP. If exposed beyond localhost, tokens and tool call data are transmitted in cleartext. | Default bind is `127.0.0.1` (localhost only). For multi-host deployments, use a reverse proxy with mTLS termination. |
 | R5: Single-point rate limiter | The rate limiter is in-process and per-instance. Multiple firewall instances do not share rate limit state. | Acceptable for single-appliance deployment. For distributed deployments, use an external rate limiter (e.g., envoy, nginx). |

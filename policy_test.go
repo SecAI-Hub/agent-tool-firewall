@@ -108,30 +108,14 @@ func TestPathTraversal_NullByteInjection(t *testing.T) {
 func TestPathTraversal_URLEncodedPaths(t *testing.T) {
 	setupMaliciousInputPolicy()
 
-	// URL-encoded sequences are passed as literal strings to the firewall.
-	// filepath.Clean does NOT decode URL encoding, so "%2e%2e" stays as
-	// literal characters. Because these literal strings still start with
-	// /vault/user_docs/ after Clean+Abs, they match the allowlist.
-	//
-	// This is a known residual risk (R2 in THREAT_MODEL.md): the firewall
-	// relies on the upstream HTTP layer to have already decoded percent-encoding
-	// before the path reaches the policy engine. If a caller passes raw
-	// percent-encoded paths, they are treated as opaque filenames.
-	//
-	// We test that the firewall does NOT crash or panic on these inputs,
-	// and that paths which resolve outside the allowlist after Clean are denied.
 	cases := []struct {
 		name      string
 		path      string
-		wantAllow bool // true = known residual risk (path stays under allowlist prefix)
+		wantAllow bool
 	}{
-		// %2e%2e is literal, so Clean keeps it under /vault/user_docs/
-		{"percent-encoded dot-dot", "/vault/user_docs/%2e%2e/%2e%2e/etc/shadow", true},
-		// ..%2f is a single path component (not a separator), Clean treats it as
-		// a literal directory name, path stays under /vault/user_docs/
-		{"mixed real-dotdot with encoded slash", "/vault/user_docs/..%2f..%2fetc/shadow", true},
-		// %252e is literal, stays under allowlist
-		{"double encoding", "/vault/user_docs/%252e%252e/etc/shadow", true},
+		{"percent-encoded dot-dot", "/vault/user_docs/%2e%2e/%2e%2e/etc/shadow", false},
+		{"mixed real-dotdot with encoded slash", "/vault/user_docs/..%2f..%2fetc/shadow", false},
+		{"double encoding", "/vault/user_docs/%252e%252e/etc/shadow", false},
 	}
 
 	for _, tc := range cases {
@@ -178,34 +162,15 @@ func TestPathTraversal_SymlinkTricks(t *testing.T) {
 func TestPathTraversal_UnicodeNormalization(t *testing.T) {
 	setupMaliciousInputPolicy()
 
-	// Unicode fullwidth characters and combining sequences.
-	// filepath.Clean treats these as literal bytes, not as their ASCII
-	// equivalents. This means fullwidth dots (U+FF0E) are NOT treated as "."
-	// and fullwidth slashes (U+FF0F) are NOT treated as "/".
-	//
-	// Known residual risk (R2 in THREAT_MODEL.md): if a downstream tool
-	// performs NFKC normalization, these could become real traversal sequences.
-	// The firewall should ideally normalize before matching.
-	//
-	// We test the CURRENT behavior: paths containing fullwidth chars that
-	// still fall under the allowlist prefix are allowed (residual risk),
-	// while paths that resolve outside the allowlist are denied.
 	cases := []struct {
 		name      string
 		path      string
 		wantAllow bool
 	}{
-		// Fullwidth period (U+FF0E) and fullwidth solidus (U+FF0F):
-		// filepath.Clean sees these as opaque bytes, path stays under /vault/user_docs/
-		{"fullwidth dots", "/vault/user_docs/\uff0e\uff0e\uff0fetc/shadow", true},
-		// Combining dot below: path stays under /vault/user_docs/
-		{"combining dot", "/vault/user_docs/.\u0323./etc/shadow", true},
-		// Fullwidth slash: treated as literal, creates a different path structure.
-		// filepath.Clean keeps the path under /vault/user_docs since the fullwidth
-		// slash is not a real separator.
+		{"fullwidth dots", "/vault/user_docs/\uff0e\uff0e\uff0fetc/shadow", false},
+		{"combining dot", "/vault/user_docs/.\u0323./etc/shadow", false},
 		{"fullwidth slash mixed", "/vault/user_docs\uff0f\uff0e\uff0e/etc/shadow", false},
-		// Replacement character: opaque bytes, stays under /vault/user_docs/
-		{"replacement char path", "/vault/user_docs/\ufffd\ufffd/etc/shadow", true},
+		{"replacement char path", "/vault/user_docs/\ufffd\ufffd/etc/shadow", false},
 	}
 
 	for _, tc := range cases {
@@ -550,7 +515,7 @@ func TestCleanAndResolvePath_Canonicalization(t *testing.T) {
 	if strings.Contains(result, "..") {
 		t.Errorf("resolved path should not contain '..': %s", result)
 	}
-	if !strings.HasSuffix(result, "/etc/shadow") {
+	if !strings.HasSuffix(normalizeMatchPath(result), "/etc/shadow") {
 		t.Errorf("expected path ending in /etc/shadow, got: %s", result)
 	}
 }

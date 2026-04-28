@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -261,13 +263,106 @@ func cleanAndResolvePath(raw string) (string, error) {
 	if strings.ContainsRune(raw, 0) {
 		return "", fmt.Errorf("path contains null byte")
 	}
-	cleaned := filepath.Clean(raw)
+	decoded, err := decodePath(raw)
+	if err != nil {
+		return "", err
+	}
+	if containsUnicodePathConfusable(decoded) {
+		return "", fmt.Errorf("path contains unicode path confusable")
+	}
+	cleaned := filepath.Clean(decoded)
 	// Resolve to absolute to catch ../../../etc/shadow style attacks
 	abs, err := filepath.Abs(cleaned)
 	if err != nil {
 		return "", fmt.Errorf("cannot resolve path: %w", err)
 	}
-	return abs, nil
+	return resolvePath(abs)
+}
+
+func decodePath(raw string) (string, error) {
+	decoded := raw
+	for i := 0; i < 3; i++ {
+		next, err := url.PathUnescape(decoded)
+		if err != nil {
+			return "", fmt.Errorf("path contains invalid percent-encoding")
+		}
+		if next == decoded {
+			return decoded, nil
+		}
+		if strings.ContainsRune(next, 0) {
+			return "", fmt.Errorf("path contains null byte")
+		}
+		decoded = next
+	}
+	return "", fmt.Errorf("path is percent-encoded too deeply")
+}
+
+func containsUnicodePathConfusable(raw string) bool {
+	for _, r := range raw {
+		switch r {
+		case '\u2044', '\u2215', '\u2216', '\u29f8', '\uff0e', '\uff0f', '\uff3c', '\ufffd':
+			return true
+		}
+		if unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r) {
+			return true
+		}
+	}
+	return false
+}
+
+func resolvePath(abs string) (string, error) {
+	cursor := abs
+	var suffix []string
+	for {
+		resolved, err := filepath.EvalSymlinks(cursor)
+		if err == nil {
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("cannot resolve path: %w", err)
+		}
+		parent := filepath.Dir(cursor)
+		if parent == cursor {
+			return filepath.Clean(abs), nil
+		}
+		suffix = append(suffix, filepath.Base(cursor))
+		cursor = parent
+	}
+}
+
+func normalizeMatchPath(raw string) string {
+	clean := filepath.Clean(raw)
+	slash := filepath.ToSlash(clean)
+	if vol := filepath.VolumeName(clean); vol != "" {
+		slash = strings.ToLower(filepath.ToSlash(vol)) + strings.TrimPrefix(slash, vol)
+	}
+	return slash
+}
+
+func pathMatchCandidates(raw string) []string {
+	norm := normalizeMatchPath(raw)
+	candidates := []string{norm}
+	if vol := filepath.VolumeName(filepath.Clean(raw)); vol != "" {
+		volNorm := strings.ToLower(filepath.ToSlash(vol))
+		trimmed := strings.TrimPrefix(norm, volNorm)
+		if trimmed != "" {
+			candidates = append(candidates, trimmed)
+		}
+	}
+	return candidates
+}
+
+func hasPathPrefix(path, prefix string) bool {
+	prefixNorm := normalizeMatchPath(prefix)
+	for _, candidate := range pathMatchCandidates(path) {
+		if candidate == prefixNorm || strings.HasPrefix(candidate, prefixNorm+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // matchesGlob checks if a path matches an allowlist pattern.
@@ -276,14 +371,14 @@ func matchesGlob(path, pattern string) bool {
 	if strings.HasSuffix(pattern, "/**") {
 		prefix := strings.TrimSuffix(pattern, "/**")
 		prefix = filepath.Clean(prefix)
-		return strings.HasPrefix(path, prefix+"/") || path == prefix
+		return hasPathPrefix(path, prefix)
 	}
 	if strings.HasSuffix(pattern, "**") {
 		prefix := strings.TrimSuffix(pattern, "**")
 		prefix = filepath.Clean(prefix)
-		return strings.HasPrefix(path, prefix)
+		return hasPathPrefix(path, prefix)
 	}
-	return strings.HasPrefix(path, filepath.Clean(pattern))
+	return hasPathPrefix(path, pattern)
 }
 
 // ---------------------------------------------------------------------------
