@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -216,7 +217,7 @@ func inspectTrustedCredentialPath(path string, forbiddenFileMode os.FileMode, ef
 			return nil, fmt.Errorf("%s must not be a symbolic link", cursor)
 		}
 		owner, ok := credentialOwnerUID(info)
-		if !ok || (owner != 0 && owner != int64(effectiveUID)) {
+		if !ok || (owner != "0" && owner != strconv.Itoa(effectiveUID)) {
 			return nil, fmt.Errorf("%s must be owned by root or effective uid %d", cursor, effectiveUID)
 		}
 		if file {
@@ -246,28 +247,31 @@ func inspectTrustedCredentialPath(path string, forbiddenFileMode os.FileMode, ef
 	return identities, nil
 }
 
-func credentialOwnerUID(info os.FileInfo) (int64, bool) {
+func credentialOwnerUID(info os.FileInfo) (string, bool) {
 	value := reflect.ValueOf(info.Sys())
 	if !value.IsValid() {
-		return 0, false
+		return "", false
 	}
 	if value.Kind() == reflect.Pointer {
 		value = value.Elem()
 	}
 	if !value.IsValid() || value.Kind() != reflect.Struct {
-		return 0, false
+		return "", false
 	}
 	field := value.FieldByName("Uid")
 	if !field.IsValid() {
-		return 0, false
+		return "", false
 	}
 	switch field.Kind() {
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return int64(field.Uint()), true
+		return strconv.FormatUint(field.Uint(), 10), true
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return field.Int(), true
+		if field.Int() < 0 {
+			return "", false
+		}
+		return strconv.FormatInt(field.Int(), 10), true
 	default:
-		return 0, false
+		return "", false
 	}
 }
 
