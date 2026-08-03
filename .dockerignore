@@ -1,0 +1,10 @@
+.git
+.local
+dist
+coverage.out
+agent-tool-firewall
+*.key
+*.pem
+*.jsonl
+service-token
+*.token

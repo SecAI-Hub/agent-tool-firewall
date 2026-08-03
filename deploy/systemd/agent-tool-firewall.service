@@ -8,7 +8,10 @@ ExecStart=/usr/local/bin/agent-tool-firewall
 Environment=BIND_ADDR=127.0.0.1:8475
 Environment=POLICY_PATH=/etc/agent-tool-firewall/policy.yaml
 Environment=AUDIT_LOG_PATH=/var/lib/agent-tool-firewall/audit.jsonl
-Environment=SERVICE_TOKEN_PATH=/run/agent-tool-firewall/service-token
+LoadCredential=service-token:/etc/agent-tool-firewall/service-token
+LoadCredential=admin-token:/etc/agent-tool-firewall/admin-token
+Environment=SERVICE_TOKEN_PATH=%d/service-token
+Environment=ADMIN_TOKEN_PATH=%d/admin-token
 
 # Filesystem isolation
 DynamicUser=yes
@@ -16,7 +19,6 @@ StateDirectory=agent-tool-firewall
 LogsDirectory=agent-tool-firewall
 ReadOnlyPaths=/etc/agent-tool-firewall
 ReadWritePaths=/var/lib/agent-tool-firewall
-PrivateNetwork=yes
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectSystem=strict
@@ -45,7 +47,7 @@ AmbientCapabilities=
 
 # Namespace restrictions
 RestrictNamespaces=yes
-RestrictAddressFamilies=AF_UNIX
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 PrivateUsers=yes
 
 # Syscall filtering
@@ -60,6 +62,7 @@ CPUQuota=25%
 TasksMax=32
 LimitNOFILE=512
 LimitCORE=0
+UMask=0077
 
 Restart=always
 RestartSec=2

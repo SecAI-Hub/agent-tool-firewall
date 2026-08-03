@@ -1,0 +1,19 @@
+version: 1
+
+defaults:
+  network:
+    runtime_egress: deny
+  logging:
+    store_raw_prompts: false
+    store_raw_responses: false
+
+tools:
+  default: deny
+  rate_limit:
+    requests_per_minute: 120
+    burst_size: 20
+  allow: []
+  deny:
+    - name: shell.exec
+    - name: process.spawn
+    - name: filesystem.delete

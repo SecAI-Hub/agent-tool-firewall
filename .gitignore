@@ -14,3 +14,23 @@ Thumbs.db
 
 # Test
 coverage.out
+
+# Local credentials and runtime data
+.env
+.env.*
+!.env.example
+service-token
+*.token
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+credentials/
+*.db
+*.sqlite
+*.sqlite3
+*.jsonl
+logs/
+.local/
+dist/

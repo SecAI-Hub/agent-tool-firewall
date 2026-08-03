@@ -1,5 +1,5 @@
 {
-  "_comment": "Seccomp profile for agent-tool-firewall (Go binary). Localhost network, read-only config, write only to audit logs. No exec.",
+  "_comment": "Seccomp profile for agent-tool-firewall (Go binary). Localhost network, read-only config, audit writes, and the initial OCI exec.",
   "defaultAction": "SCMP_ACT_ERRNO",
   "defaultErrnoRet": 1,
   "archMap": [
@@ -15,10 +15,11 @@
         "rt_sigaction", "rt_sigprocmask", "rt_sigreturn",
         "pread64", "pwrite64", "readv", "writev",
         "access", "pipe", "pipe2", "dup", "dup2", "dup3",
-        "getpid", "getuid", "getgid", "geteuid", "getegid",
+        "getpid", "getuid", "getgid", "geteuid", "getegid", "capget", "capset",
+        "setuid", "setgid", "setgroups", "setresuid", "setresgid",
         "getppid", "gettid", "getdents64",
         "clone", "clone3", "wait4",
-        "exit", "exit_group",
+        "exit", "exit_group", "execve", "execveat",
         "futex", "futex_waitv",
         "set_robust_list", "get_robust_list",
         "nanosleep", "clock_nanosleep", "clock_gettime", "clock_getres",
@@ -35,10 +36,10 @@
       "names": [
         "open", "openat", "openat2", "fcntl",
         "fadvise64",
-        "ftruncate", "fsync", "fdatasync",
+        "ftruncate", "fchmod", "fsync", "fdatasync",
         "readlink", "readlinkat",
         "statx", "statfs", "fstatfs",
-        "getcwd", "umask"
+        "getcwd", "chdir", "fchdir", "umask"
       ],
       "action": "SCMP_ACT_ALLOW"
     },
@@ -53,7 +54,7 @@
       "action": "SCMP_ACT_ALLOW"
     },
     {
-      "_comment": "Localhost socket (:8475)",
+      "_comment": "TCP listener (:8475); bind exposure is controlled by BIND_ADDR, ALLOW_REMOTE_BIND, and the host port mapping",
       "names": [
         "socket", "bind", "listen", "accept", "accept4",
         "connect", "getsockopt", "setsockopt",

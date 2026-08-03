@@ -14,9 +14,13 @@ servers:
   - url: http://127.0.0.1:8475
     description: Local development
 
+security:
+  - bearerAuth: []
+
 paths:
   /health:
     get:
+      security: []
       summary: Health check
       operationId: getHealth
       tags: [monitoring]
@@ -31,15 +35,10 @@ paths:
                   status:
                     type: string
                     example: "ok"
-                  total_requests:
-                    type: integer
-                    example: 1024
-                  denied_requests:
-                    type: integer
-                    example: 37
 
   /v1/evaluate:
     post:
+      x-required-role: evaluator
       summary: Evaluate a tool call against policy
       operationId: evaluateToolCall
       tags: [policy]
@@ -58,14 +57,24 @@ paths:
                 $ref: "#/components/schemas/ToolCallResponse"
         "400":
           description: Invalid request body
+        "403":
+          description: Authenticated credential lacks evaluator role
+        "401":
+          description: Missing or invalid credential
+        "413":
+          description: Request exceeds 64 KiB
+        "503":
+          description: Audit log unavailable; decision withheld
         "405":
           description: Method not allowed (only POST accepted)
 
   /v1/stats:
     get:
+      x-required-role: observer
       summary: Aggregated security statistics
       operationId: getStats
       tags: [monitoring]
+      description: Requires the observer role.
       responses:
         "200":
           description: Statistics
@@ -89,14 +98,22 @@ paths:
                   denied_requests:
                     type: integer
                     example: 37
+        "401":
+          description: Missing or invalid credential
+        "403":
+          description: Authenticated credential lacks observer role
+        "405":
+          description: Method not allowed (only GET accepted)
 
   /v1/reload:
     post:
+      x-required-role: administrator
       summary: Hot-reload policy file
       operationId: reloadPolicy
       tags: [admin]
       security:
         - bearerAuth: []
+      description: Requires the isolated administrator role.
       responses:
         "200":
           description: Policy reloaded
@@ -109,15 +126,22 @@ paths:
                     type: string
                     example: "reloaded"
         "403":
-          description: Invalid or missing service token
+          description: Authenticated credential lacks administrator role
+        "401":
+          description: Missing or invalid credential
         "500":
           description: Policy reload failed
+        "503":
+          description: Audit log unavailable; reload withheld
+        "405":
+          description: Method not allowed (only POST accepted)
 
 components:
   schemas:
     ToolCallRequest:
       type: object
       required: [tool]
+      additionalProperties: false
       properties:
         tool:
           type: string
@@ -125,11 +149,16 @@ components:
           example: "filesystem.read"
         params:
           type: object
-          additionalProperties:
-            type: string
-          description: Tool parameters (key-value pairs)
+          additionalProperties: {}
+          maxProperties: 128
+          description: Tool parameters; JSON values retain their type and are checked against the selected tool's typed argument contract
           example:
             path: "/home/user/documents/notes.txt"
+        args:
+          type: object
+          additionalProperties: {}
+          maxProperties: 128
+          description: Legacy alias for params; requests cannot contain both fields
 
     ToolCallResponse:
       type: object
@@ -147,4 +176,4 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: Service-to-service token (loaded from SERVICE_TOKEN_PATH)
+      description: File-backed credential bound to an audited identity and explicit role set

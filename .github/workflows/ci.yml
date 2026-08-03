@@ -3,51 +3,155 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "**.md"
   pull_request:
-    paths-ignore:
-      - "**.md"
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  build-and-test:
-    name: Build & Test
+  test:
+    name: Build, Test, Vet, Vulnerability Check
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          go-version: "1.23"
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.26.5"
           cache-dependency-path: go.sum
 
-      - name: Build
-        run: CGO_ENABLED=0 go build -ldflags="-s -w" -o /dev/null .
+      - name: Verify dependency graph
+        run: go mod verify
 
-      - name: Test
-        run: go test -v -race -count=1 ./...
+      - name: Build
+        run: CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" ./...
+
+      - name: Race tests
+        run: go test -race -count=1 ./...
 
       - name: Vet
         run: go vet ./...
 
+      - name: Static security analysis
+        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 -severity medium -confidence medium ./...
+
       - name: Format check
         run: test -z "$(gofmt -s -l .)"
 
-  container:
-    name: Container Build
+      - name: Validate release tags and immutable OCI mapping
+        run: |
+          test "$(scripts/derive-oci-tag.sh v1.2.3)" = "v1.2.3"
+          test "$(scripts/derive-oci-tag.sh v1.2.3-rc.1+build.5)" = "v1.2.3-rc.1_build.5"
+          if scripts/derive-oci-tag.sh v1.2.3-01; then exit 1; fi
+          if scripts/derive-oci-tag.sh v1.2.3_bad; then exit 1; fi
+          oversized="v1.2.3+$(printf 'a%.0s' {1..128})"
+          if scripts/derive-oci-tag.sh "$oversized"; then exit 1; fi
+
+      - name: Validate workflows and immutable action pins
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/repo:ro" -w /repo \
+            rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
+          bad_pins="$(grep -R -n -E '^[[:space:]]*- uses:' .github/workflows \
+            | grep -E -v '@[0-9a-f]{40}([[:space:]]*(#.*)?)$' || true)"
+          test -z "$bad_pins"
+
+      - name: Validate Fedora systemd unit
+        run: |
+          fedora_image="docker.io/library/fedora@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898"
+          docker run --rm -v "$GITHUB_WORKSPACE:/src:ro" "$fedora_image" \
+            sh -ceu 'dnf -q -y --setopt=gpgcheck=1 install systemd >/dev/null 2>&1
+          install -m 0755 /usr/bin/true /usr/local/bin/agent-tool-firewall
+          systemd-analyze verify /src/deploy/systemd/agent-tool-firewall.service'
+
+      - name: Validate systemd unit without package transactions
+        run: |
+          systemd_image="registry.access.redhat.com/ubi9/ubi-init@sha256:399b1f14327d3cf71b0521d252d3394dad34076f45a6116fa55c10c541db81d6"
+          docker run --rm -v "$GITHUB_WORKSPACE:/src:ro" "$systemd_image" \
+            sh -ceu 'install -m 0755 /usr/bin/true /usr/local/bin/agent-tool-firewall
+          systemd-analyze verify /src/deploy/systemd/agent-tool-firewall.service'
+
+      - name: Vulnerability check
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+          govulncheck ./...
+
+  secrets:
+    name: Secret Scan
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Build container image
-        run: docker build -f Containerfile -t agent-tool-firewall:test .
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan worktree and history
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/repo:ro" -w /repo \
+            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            dir . --redact --no-banner --no-color
+          docker run --rm -v "$GITHUB_WORKSPACE:/repo:ro" -w /repo \
+            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git . --redact --no-banner --no-color
+
+  container:
+    name: Container Build and Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Build image
+        run: docker build --pull -f Containerfile -t agent-tool-firewall:ci .
+      - name: Host-port hardened runtime smoke
+        run: |
+          set -euo pipefail
+          credential_volume="agent-tool-firewall-ci-credentials"
+          container_name="agent-tool-firewall-ci-smoke"
+          cleanup() {
+            docker rm -f "$container_name" >/dev/null 2>&1 || true
+            docker volume rm "$credential_volume" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker volume create "$credential_volume" >/dev/null
+          docker run --rm -v "$credential_volume:/data" \
+            docker.io/library/alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40 \
+            sh -c 'chown 65534:65534 /data; chmod 700 /data; umask 077; head -c 48 /dev/urandom | base64 | tr -d "\n" > /data/service-token; head -c 48 /dev/urandom | base64 | tr -d "\n" > /data/admin-token; chown 65534:65534 /data/service-token /data/admin-token'
+          docker run -d --name "$container_name" -p 127.0.0.1:18475:8475 \
+            --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+            --security-opt="seccomp=$GITHUB_WORKSPACE/deploy/seccomp/agent-tool-firewall.json" \
+            --pids-limit=64 --tmpfs /tmp:rw,noexec,nosuid,nodev,uid=65534,gid=65534,mode=0700 \
+            --tmpfs /var/lib/secure-ai/logs:rw,noexec,nosuid,nodev,uid=65534,gid=65534,mode=0700 \
+            -v "$credential_volume:/run/secure-ai:ro" agent-tool-firewall:ci >/dev/null
+          for attempt in {1..30}; do
+            curl --fail --silent http://127.0.0.1:18475/health >/dev/null && break
+            test "$attempt" -lt 30
+            sleep 1
+          done
+          token="$(docker run --rm -v "$credential_volume:/data:ro" \
+            docker.io/library/alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40 \
+            cat /data/service-token)"
+          admin_token="$(docker run --rm -v "$credential_volume:/data:ro" \
+            docker.io/library/alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40 \
+            cat /data/admin-token)"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18475/v1/stats)" = "401"
+          curl --fail --silent -H "Authorization: Bearer $token" http://127.0.0.1:18475/v1/stats >/dev/null
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST -H "Authorization: Bearer $token" http://127.0.0.1:18475/v1/reload)" = "403"
+          curl --fail --silent -X POST -H "Authorization: Bearer $admin_token" http://127.0.0.1:18475/v1/reload >/dev/null
+      - name: Scan source
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/src:ro" \
+            aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e \
+            fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --exit-code 1 /src
+      - name: Scan image
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e \
+            image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 agent-tool-firewall:ci

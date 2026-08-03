@@ -29,11 +29,13 @@ LLMs and AI agents increasingly call external tools (file I/O, shell commands, A
 | Path allowlisting | Filesystem access restricted to permitted directories |
 | Traversal protection | Catches `../`, null bytes, symlink escapes |
 | Argument filtering | Block dangerous patterns in tool arguments |
-| Rate limiting | Sliding-window rate limiter (configurable RPM) |
+| Typed tool contracts | Per-tool JSON types, required fields, limits, patterns, and audit redaction; typed contracts reject every undeclared field |
+| Rate limiting | Process-wide token-bucket limiter (configurable RPM and burst) |
 | Structured audit log | JSONL audit trail for every decision |
 | Hot reload | Reload policy without restart (`POST /v1/reload`) |
-| Bearer token auth | Optional service-to-service authentication |
-| Zero dependencies | Single static binary, only needs a policy YAML file |
+| Scoped bearer identities | File-backed credentials bind stable audit identities to exact `evaluator`, `observer`, or isolated `administrator` roles; only `/health` is public |
+| Privacy-preserving audit | Prompt, response, credential, and oversized values are redacted before durable JSONL logging; credential aliases use constant redaction without guessable hashes |
+| Strict parsing | Bounded JSON/YAML, unknown-field rejection, one-document enforcement, and validated policy limits |
 
 ## Quick start
 
@@ -48,6 +50,11 @@ tools:
     requests_per_minute: 120
   allow:
     - name: "filesystem.read"
+      args:
+        - name: "path"
+          type: "string"
+          required: true
+          max_length: 4096
       paths_allowlist:
         - "/home/user/documents/**"
       paths_denylist:
@@ -55,6 +62,11 @@ tools:
         - "/etc/passwd"
       max_arg_length: 4096
     - name: "web.search"
+      args:
+        - name: "query"
+          type: "string"
+          required: true
+          max_length: 1024
       args_blocklist:
         - "password"
         - "secret"
@@ -68,18 +80,40 @@ tools:
 ```bash
 # From source
 go build -o agent-tool-firewall .
-POLICY_PATH=./policy.yaml ./agent-tool-firewall
+openssl rand -hex 32 > ./service-token
+openssl rand -hex 32 > ./admin-token
+chmod 600 ./service-token ./admin-token
+install -d -m 700 ./logs
+POLICY_PATH=./policy.yaml \
+SERVICE_TOKEN_PATH=./service-token \
+ADMIN_TOKEN_PATH=./admin-token \
+AUDIT_LOG_PATH="$PWD/audit.jsonl" \
+./agent-tool-firewall
 
 # With Docker/Podman
 podman build -t agent-tool-firewall .
-podman run -v ./policy.yaml:/etc/secure-ai/policy/policy.yaml:ro \
-  -p 8475:8475 agent-tool-firewall
+podman run --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+  --userns=keep-id:uid=65534,gid=65534 \
+  --pids-limit=64 -p 127.0.0.1:8475:8475 \
+  -v ./policy.yaml:/etc/secure-ai/policy/policy.yaml:ro,Z \
+  -v ./service-token:/run/secure-ai/service-token:ro,Z \
+  -v ./admin-token:/run/secure-ai/admin-token:ro,Z \
+  -v ./logs:/var/lib/secure-ai/logs:Z \
+  agent-tool-firewall
 ```
+
+The container image listens on `0.0.0.0:8475` so published ports work; the
+example deliberately publishes only to host loopback. Source and systemd runs
+remain loopback-only unless remote binding is explicitly enabled.
+The rootless Podman example maps the invoking Fedora user to the image's numeric
+UID/GID so the owner-only token and audit directory remain accessible without
+loosening their permissions; `:Z` applies a private SELinux label.
 
 ### 3. Evaluate a tool call
 
 ```bash
 curl -s -X POST http://127.0.0.1:8475/v1/evaluate \
+  -H "Authorization: Bearer $(cat ./service-token)" \
   -H "Content-Type: application/json" \
   -d '{"tool":"filesystem.read","params":{"path":"/home/user/documents/notes.txt"}}' | jq .
 ```
@@ -90,6 +124,7 @@ curl -s -X POST http://127.0.0.1:8475/v1/evaluate \
 
 ```bash
 curl -s -X POST http://127.0.0.1:8475/v1/evaluate \
+  -H "Authorization: Bearer $(cat ./service-token)" \
   -H "Content-Type: application/json" \
   -d '{"tool":"shell.exec","params":{"cmd":"rm -rf /"}}' | jq .
 ```
@@ -102,10 +137,10 @@ curl -s -X POST http://127.0.0.1:8475/v1/evaluate \
 
 | Endpoint | Method | Auth | Description |
 |---|---|---|---|
-| `/health` | GET | No | Health check + request counters |
-| `/v1/evaluate` | POST | No | Evaluate a tool call against policy |
-| `/v1/stats` | GET | No | Aggregated security statistics |
-| `/v1/reload` | POST | Bearer | Hot-reload the policy file |
+| `/health` | GET | No | Minimal liveness check |
+| `/v1/evaluate` | POST | `evaluator` | Evaluate a tool call against policy |
+| `/v1/stats` | GET | `observer` | Aggregated security statistics |
+| `/v1/reload` | POST | `administrator` | Hot-reload the policy file |
 
 ### POST /v1/evaluate
 
@@ -141,9 +176,22 @@ All configuration is via environment variables:
 | Variable | Default | Description |
 |---|---|---|
 | `BIND_ADDR` | `127.0.0.1:8475` | Listen address |
+| `ALLOW_REMOTE_BIND` | unset | Exact `true` permits a non-loopback listener |
 | `POLICY_PATH` | `/etc/secure-ai/policy/policy.yaml` | Path to YAML policy file |
 | `AUDIT_LOG_PATH` | `/var/lib/secure-ai/logs/tool-firewall-audit.jsonl` | Audit log output |
-| `SERVICE_TOKEN_PATH` | `/run/secure-ai/service-token` | Bearer token file for `/v1/reload` |
+| `SERVICE_TOKEN_PATH` | `/run/secure-ai/service-token` | Compatibility credential with `evaluator` and `observer` roles |
+| `ADMIN_TOKEN_PATH` | `/run/secure-ai/admin-token` | Separate credential with only the `administrator` role |
+| `CREDENTIALS_CONFIG_PATH` | unset | Optional strict YAML credential/identity configuration replacing both compatibility credentials |
+
+Startup fails if credentials or the audit log cannot be opened. Without a credential
+configuration, distinct service and administrative tokens are mandatory. For multiple
+callers, set `CREDENTIALS_CONFIG_PATH` to a file following
+[`deploy/credentials.example.yaml`](deploy/credentials.example.yaml). Each entry binds an
+audited identity to explicit roles and an absolute owner-only token file; the configuration
+path itself must also be absolute. Token values and
+identities must be unique; administrator cannot be combined with another role. Tokens must
+contain 32–4096 non-whitespace bytes. Only SHA-256 token digests remain in process after
+startup, so authentication compares fixed-length values. Policies remain strict version 1/default-deny.
 
 ## Policy reference
 
@@ -154,28 +202,39 @@ See [examples/policy.yaml](examples/policy.yaml) for a fully annotated example.
 1. **Rate limit** -- reject if over budget
 2. **Deny list** -- explicit denials always win
 3. **Allow list** -- tool must be listed (in default-deny mode)
-4. **Argument validation** -- length limits, blocked patterns
+4. **Argument validation** -- JSON types, required fields, per-argument limits, patterns, and blocked values. When `args` is present it is a complete allowlist; undeclared execution, network, content, and path fields otherwise fail closed unless a path policy explicitly constrains them.
 5. **Path security** -- clean, resolve, check denylist, check allowlist
 
 ### Path matching
 
 - `/vault/user_docs/**` -- recursive match (everything under the directory)
-- Paths are canonicalized (`filepath.Clean` + `filepath.Abs`) before matching
+- Paths are canonicalized through the deepest existing filesystem prefix before matching
+- Request paths must be absolute
 - `../` traversal and null-byte injection are caught and rejected
+- Symlink escapes, percent-encoding tricks, Unicode separator confusables, prefix lookalikes, missing path arguments, and alternate path keys are denied
 
 ## Hardening
 
 When deploying in production, consider:
 
-- **Systemd sandboxing:** See [deploy/systemd/](deploy/systemd/) for a hardened unit file with `DynamicUser=yes`, `PrivateNetwork=yes`, `MemoryDenyWriteExecute=yes`, and syscall filtering.
-- **Seccomp profile:** See [deploy/seccomp/](deploy/seccomp/) for a strict seccomp profile that blocks exec syscalls.
-- **Service token:** Set `SERVICE_TOKEN_PATH` to require Bearer auth on the reload endpoint.
+- **Systemd sandboxing:** See [deploy/systemd/](deploy/systemd/) for a hardened unit with `DynamicUser=yes`, loopback binding, `LoadCredential=` token delivery, `MemoryDenyWriteExecute=yes`, and syscall filtering.
+- **Seccomp profile:** See [deploy/seccomp/](deploy/seccomp/) for a tested syscall allowlist. OCI startup requires `execve`; the service itself contains no subprocess execution path.
+- **Scoped credentials:** Keep evaluator, observer, and administrator secrets separate. A
+  compatibility service credential has evaluator+observer only; it can never reload policy.
+- **Audit durability:** audit files are owner-only (`0600`), single-link regular files. Identity and permissions are rechecked before every append and the log fails closed at 256 MiB. Rotate it while the service is stopped.
+
+For systemd, install the credential source at
+`/etc/agent-tool-firewall/service-token` and `/etc/agent-tool-firewall/admin-token` as
+distinct root-owned `0600` files. The service
+manager copies it into the unit's protected credential directory; the token is
+not passed in the process environment or exposed through a manually managed
+shared `/run` path.
 
 ## Multi-host deployment
 
 By default, agent-tool-firewall binds to `127.0.0.1:8475` (localhost only). This is intentional: in appliance mode, only local processes should reach the firewall. **Never expose the firewall directly to untrusted networks.**
 
-For multi-host deployments where the LLM agent runs on a different machine than the firewall, place agent-tool-firewall behind a reverse proxy that terminates mTLS (mutual TLS). This ensures:
+For multi-host deployments where the LLM agent runs on a different machine than the firewall, set `ALLOW_REMOTE_BIND=true` only when placing agent-tool-firewall behind a reverse proxy that terminates mTLS (mutual TLS). This ensures:
 
 - **Encryption in transit** -- tool call data and bearer tokens are not sent in cleartext.
 - **Client authentication** -- only agents with a valid client certificate can reach the firewall.
@@ -220,7 +279,10 @@ For Envoy, the equivalent configuration uses `transport_socket` with `require_cl
 
 ## Integration with SecAI OS
 
-agent-tool-firewall is used as a core component of [SecAI OS](https://github.com/SecAI-Hub/SecAI_OS), a bootable local-first AI appliance. In that context it runs as a systemd service with strict sandboxing, seccomp filtering, and no network access.
+agent-tool-firewall is used as a core component of [SecAI OS](https://github.com/SecAI-Hub/SecAI_OS), a bootable local-first AI appliance. In that context it runs as a loopback-only systemd service with strict sandboxing and syscall filtering.
+
+See [SECURITY.md](SECURITY.md), [THREAT_MODEL.md](THREAT_MODEL.md), and the
+[security audit](SECURITY_AUDIT.md) before production deployment.
 
 ## License
 

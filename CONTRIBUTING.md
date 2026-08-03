@@ -4,7 +4,7 @@
 
 | Tool | Version |
 |---|---|
-| Go | 1.22+ |
+| Go | 1.25+ (CI uses 1.26.5) |
 | git | 2.x |
 
 ## Local development
@@ -20,7 +20,14 @@ go vet ./...
 ## Running locally
 
 ```bash
-POLICY_PATH=./examples/policy.yaml ./agent-tool-firewall
+openssl rand -hex 32 > ./service-token
+openssl rand -hex 32 > ./admin-token
+chmod 600 ./service-token ./admin-token
+POLICY_PATH=./examples/policy.yaml \
+SERVICE_TOKEN_PATH=./service-token \
+ADMIN_TOKEN_PATH=./admin-token \
+AUDIT_LOG_PATH="$PWD/audit.jsonl" \
+./agent-tool-firewall
 ```
 
 ## Tests

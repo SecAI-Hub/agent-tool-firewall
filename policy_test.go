@@ -365,10 +365,9 @@ func TestEmptyPolicy_NilParams(t *testing.T) {
 		Tool:   "filesystem.read",
 		Params: nil,
 	})
-	// Should be allowed since filesystem.read is in the allowlist and no path
-	// to validate
-	if !resp.Allowed {
-		t.Errorf("nil params should be allowed for listed tool, got: %s", resp.Reason)
+	// A filesystem policy with an allowlist must fail closed when the path is absent.
+	if resp.Allowed {
+		t.Error("nil params must be denied when an allowlisted path is required")
 	}
 }
 
@@ -384,8 +383,8 @@ func TestEmptyPolicy_EmptyToolName(t *testing.T) {
 	}
 }
 
-func TestEmptyPolicy_DefaultAllow(t *testing.T) {
-	// When default is "allow", unknown tools should be permitted
+func TestEmptyPolicy_DefaultAllowFailsClosed(t *testing.T) {
+	// Invalid in-memory policy state must not turn into an allow-all bypass.
 	policyMu.Lock()
 	policy = Policy{
 		Version: 1,
@@ -402,8 +401,8 @@ func TestEmptyPolicy_DefaultAllow(t *testing.T) {
 		Tool:   "unknown.tool",
 		Params: map[string]string{},
 	})
-	if !resp.Allowed {
-		t.Error("default-allow policy should permit unknown tools")
+	if resp.Allowed {
+		t.Error("default-allow policy state must fail closed")
 	}
 }
 
@@ -447,9 +446,8 @@ func TestPathValidation_EmptyPath(t *testing.T) {
 		Tool:   "filesystem.read",
 		Params: map[string]string{"path": ""},
 	})
-	// Empty path should pass path validation (checkPathConstraints returns true for empty)
-	if !resp.Allowed {
-		t.Errorf("empty path should be allowed, got: %s", resp.Reason)
+	if resp.Allowed {
+		t.Error("empty path must be denied when an allowlisted path is required")
 	}
 }
 

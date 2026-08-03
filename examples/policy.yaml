@@ -17,13 +17,12 @@ version: 1
 # The tool firewall evaluates every tool call against this section.
 tools:
   # Default action for tools not in the allow or deny list.
-  # "deny" = reject unknown tools (recommended).
-  # "allow" = allow unknown tools (NOT recommended).
+  # Only "deny" is accepted; permissive defaults fail validation.
   default: "deny"
 
   # Global rate limit across all tool calls.
   rate_limit:
-    # Maximum tool calls per minute (sliding window).
+    # Sustained tool calls per minute for the process-wide token bucket.
     requests_per_minute: 120
     # Burst size for rate limiting.
     burst_size: 20
@@ -31,6 +30,11 @@ tools:
   # Tools explicitly allowed, with constraints.
   allow:
     - name: "filesystem.read"
+      args:
+        - name: "path"
+          type: "string"
+          required: true
+          max_length: 4096
       # Only allow reading from these directories.
       paths_allowlist:
         - "/home/user/documents/**"
@@ -43,6 +47,16 @@ tools:
       max_arg_length: 4096
 
     - name: "filesystem.write"
+      args:
+        - name: "path"
+          type: "string"
+          required: true
+          max_length: 4096
+        - name: "content"
+          type: "string"
+          required: true
+          max_length: 65536
+          redact: true
       # Only allow writing to the outputs directory.
       paths_allowlist:
         - "/home/user/outputs/**"
@@ -51,15 +65,24 @@ tools:
         - "../"
         - "/etc/"
         - "/usr/"
-      max_arg_length: 4096
+      max_arg_length: 65536
 
     - name: "filesystem.list"
+      args:
+        - name: "path"
+          type: "string"
+          required: true
       # Allow listing files in user directories.
       paths_allowlist:
         - "/home/user/documents/**"
         - "/home/user/outputs/**"
 
     - name: "web.search"
+      args:
+        - name: "query"
+          type: "string"
+          required: true
+          max_length: 1024
       # No path constraints — argument filtering only.
       args_blocklist:
         - "password"

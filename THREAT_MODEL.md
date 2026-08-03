@@ -20,7 +20,7 @@ agent-tool-firewall is a default-deny policy gateway that sits between an LLM/AI
 |---|---|---|---|
 | B1: Agent -> Firewall | LLM agent | Firewall `/v1/evaluate` | Untrusted. The agent may be prompt-injected or compromised. All input is treated as adversarial. |
 | B2: Firewall -> Backend | Firewall decision | Backend tool execution | Trusted. The firewall's allow decision is authoritative. The backend tool trusts that the firewall has validated the call. |
-| B3: Admin -> Firewall | Operator | `/v1/reload` endpoint | Privileged. Protected by bearer token authentication. Policy changes affect the entire security posture. |
+| B3: Admin -> Firewall | Operator | `/v1/reload` endpoint | Privileged. Requires an isolated administrator identity that cannot evaluate or observe. Policy changes affect the entire security posture. |
 | B4: Firewall -> Audit log | Firewall | Audit log file | Trusted output. The audit log must not be writable by the agent or backend tools. |
 
 ## Threats
@@ -61,7 +61,7 @@ agent-tool-firewall is a default-deny policy gateway that sits between an LLM/AI
 
 ### T4: Token exfiltration
 
-**Description:** An attacker extracts the service bearer token used for the `/v1/reload` endpoint, enabling unauthorized policy changes.
+**Description:** An attacker extracts a bearer token. Its effect is limited to the exact roles bound to that credential identity, but evaluator access can still authorize unsafe calls.
 
 **Attack vectors:**
 - Reading the token file via a path traversal in a filesystem tool
@@ -75,7 +75,7 @@ agent-tool-firewall is a default-deny policy gateway that sits between an LLM/AI
 **Description:** An attacker floods the firewall with requests to exhaust the rate limit budget, blocking legitimate tool calls.
 
 **Attack vectors:**
-- Rapid-fire requests to consume the sliding window budget
+- Rapid-fire requests to consume the token-bucket budget
 - Distributed requests from multiple compromised agents
 - Oversized request bodies to consume memory/CPU
 
@@ -87,11 +87,11 @@ agent-tool-firewall is a default-deny policy gateway that sits between an LLM/AI
 |---|---|---|
 | T1: Policy bypass | Default-deny policy | Tools must be explicitly listed in the allow list. Unknown tools are rejected. Deny list is evaluated before allow list. |
 | T2: Path traversal | Path canonicalization and validation | `filepath.Clean` + `filepath.Abs` resolve all `../` sequences. Null bytes are rejected. Paths are matched against allowlist/denylist after canonicalization. |
-| T3: Argument injection | Argument filtering and length limits | `max_arg_length` enforces size limits. `args_blocklist` rejects arguments containing dangerous patterns. Case-insensitive matching. |
-| T4: Token exfiltration | Bearer token auth with constant-time comparison | Token loaded from a file (not environment variable). `crypto/subtle.ConstantTimeCompare` prevents timing attacks. Token file should be root-owned with mode 0400. |
-| T5: DoS via rate limiting | Sliding window rate limiter | Configurable `requests_per_minute` with burst support. Request body size capped at 64 KB via `http.MaxBytesReader`. |
-| General | Minimal attack surface | Single static binary with zero runtime dependencies. No shell access. No network egress. Systemd sandboxing (DynamicUser, PrivateNetwork, seccomp). |
-| General | Audit logging | Every policy decision is logged to a structured JSONL audit trail with timestamp, tool name, parameters, decision, and reason. |
+| T3: Argument injection | Typed, allowlisted argument contracts and length limits | Per-tool `args` rules enforce JSON types, required fields, bounds, and patterns. Undeclared dangerous and credential aliases fail closed; `args_blocklist` inspects raw/nested strings without JSON HTML-escaping bypasses. |
+| T4: Token exfiltration | Scoped file-backed identities with constant-time comparison | Unique tokens bind audited identities to explicit evaluator/observer/administrator roles. Administrator cannot be combined with other roles; token files are owner-only and never supplied as token values in the environment. |
+| T5: DoS via rate limiting | Process-wide token-bucket rate limiter | Configurable `requests_per_minute` with burst support. Request body size capped at 64 KiB via `http.MaxBytesReader`. |
+| General | Minimal attack surface | Single static binary with no runtime package dependency and no shell execution path. Source and systemd default to loopback; the container must be host-published to loopback or placed behind an authenticated TLS proxy. Systemd adds DynamicUser, syscall filtering, and resource limits. |
+| General | Audit logging | Every policy decision is durably appended and synced to a structured JSONL audit trail. Canonical credential aliases are replaced with a constant (no dictionary-oracle hash), prompt/response and oversized values are redacted, and an audit failure fails the request closed. |
 
 ## Residual risks
 
@@ -102,4 +102,5 @@ agent-tool-firewall is a default-deny policy gateway that sits between an LLM/AI
 | R3: TOCTOU on policy reload | A race between reading the policy file and applying it could lead to inconsistent state. | The current `sync.RWMutex` serializes reads and writes, but file-level TOCTOU remains if the file is modified during read. Use atomic file replacement (rename). |
 | R4: No TLS by default | The firewall listens on plain HTTP. If exposed beyond localhost, tokens and tool call data are transmitted in cleartext. | Default bind is `127.0.0.1` (localhost only). For multi-host deployments, use a reverse proxy with mTLS termination. |
 | R5: Single-point rate limiter | The rate limiter is in-process and per-instance. Multiple firewall instances do not share rate limit state. | Acceptable for single-appliance deployment. For distributed deployments, use an external rate limiter (e.g., envoy, nginx). |
-| R6: No request authentication on /v1/evaluate | Any process on localhost can submit tool evaluation requests. | Acceptable for appliance mode where only the trusted agent process has access. For multi-tenant deployments, add per-client authentication. |
+| R6: Local credential identity only | Scoped credentials provide local identities and RBAC but are long-lived bearer secrets, not tenant identity or proof of workload instance. | Use multiple least-privilege identities locally; for cross-host or tenant use, add short-lived workload identity or an identity-aware mTLS proxy and rotate tokens. |
+| R7: Decision/enforcement gap | The service returns a decision but does not execute or sandbox the downstream tool. A caller could ignore a denial or alter arguments after evaluation. | Make the firewall a mandatory gateway and bind the approved request to execution in the integrating runtime. |

@@ -4,9 +4,28 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
+
+func setupTestAudit(t *testing.T) {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "audit-*.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditMu.Lock()
+	previous := auditFile
+	auditFile = f
+	auditMu.Unlock()
+	t.Cleanup(func() {
+		auditMu.Lock()
+		auditFile = previous
+		auditMu.Unlock()
+		_ = f.Close()
+	})
+}
 
 func setupTestPolicy() {
 	policyMu.Lock()
@@ -27,6 +46,7 @@ func setupTestPolicy() {
 			},
 		},
 	}
+	policyDigest, _ = computePolicyDigest(policy)
 	policyMu.Unlock()
 }
 
@@ -129,6 +149,7 @@ func TestEvaluateEndpointMethodNotAllowed(t *testing.T) {
 
 func TestEvaluateEndpointPost(t *testing.T) {
 	setupTestPolicy()
+	setupTestAudit(t)
 	body := `{"tool":"filesystem.read","params":{"path":"/vault/user_docs/test.txt"}}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/evaluate", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -142,5 +163,47 @@ func TestEvaluateEndpointPost(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	if !resp.Allowed {
 		t.Fatalf("expected allowed, got denied: %s", resp.Reason)
+	}
+}
+
+func TestEvaluateEndpointRejectsTrailingJSON(t *testing.T) {
+	setupTestPolicy()
+	req := httptest.NewRequest(http.MethodPost, "/v1/evaluate", strings.NewReader(
+		`{"tool":"filesystem.read","params":{"path":"/vault/user_docs/test.txt"}} {}`))
+	w := httptest.NewRecorder()
+	handleEvaluate(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestEvaluateEndpointRejectsUnknownField(t *testing.T) {
+	setupTestPolicy()
+	req := httptest.NewRequest(http.MethodPost, "/v1/evaluate", strings.NewReader(
+		`{"tool":"filesystem.read","params":{"path":"/vault/user_docs/test.txt"},"bypass":true}`))
+	w := httptest.NewRecorder()
+	handleEvaluate(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestEvaluateEndpointFailsClosedWithoutAudit(t *testing.T) {
+	setupTestPolicy()
+	auditMu.Lock()
+	previous := auditFile
+	auditFile = nil
+	auditMu.Unlock()
+	t.Cleanup(func() {
+		auditMu.Lock()
+		auditFile = previous
+		auditMu.Unlock()
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/evaluate", strings.NewReader(
+		`{"tool":"filesystem.read","params":{"path":"/vault/user_docs/test.txt"}}`))
+	w := httptest.NewRecorder()
+	handleEvaluate(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
 	}
 }

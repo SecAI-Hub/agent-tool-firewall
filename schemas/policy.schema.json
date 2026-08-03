@@ -10,7 +10,7 @@
     "version": {
       "type": "integer",
       "description": "Schema version number.",
-      "minimum": 1
+      "const": 1
     },
     "defaults": {
       "type": "object",
@@ -23,7 +23,7 @@
           "properties": {
             "runtime_egress": {
               "type": "string",
-              "enum": ["deny", "allow"]
+              "const": "deny"
             }
           }
         },
@@ -51,7 +51,7 @@
       "properties": {
         "default": {
           "type": "string",
-          "enum": ["deny", "allow"],
+          "const": "deny",
           "description": "Default action for unlisted tools."
         },
         "rate_limit": {
@@ -60,18 +60,21 @@
           "properties": {
             "requests_per_minute": {
               "type": "integer",
-              "minimum": 1,
+              "minimum": 0,
+              "maximum": 1000000,
               "default": 120
             },
             "burst_size": {
               "type": "integer",
-              "minimum": 1,
+              "minimum": 0,
+              "maximum": 1000000,
               "default": 20
             }
           }
         },
         "allow": {
           "type": "array",
+          "maxItems": 4096,
           "description": "Tools explicitly allowed.",
           "items": {
             "type": "object",
@@ -80,26 +83,50 @@
             "properties": {
               "name": {
                 "type": "string",
+                "minLength": 1,
+                "maxLength": 256,
                 "description": "Tool identifier."
               },
               "paths_allowlist": {
                 "type": "array",
-                "items": { "type": "string" },
+                "maxItems": 256,
+                "items": { "type": "string", "minLength": 1 },
                 "description": "Glob patterns for allowed paths. Trailing /** for recursive."
               },
               "paths_denylist": {
                 "type": "array",
-                "items": { "type": "string" },
+                "maxItems": 256,
+                "items": { "type": "string", "minLength": 1 },
                 "description": "Glob patterns for denied paths (checked before allowlist)."
               },
               "args_blocklist": {
                 "type": "array",
-                "items": { "type": "string" },
+                "maxItems": 256,
+                "items": { "type": "string", "minLength": 1, "maxLength": 4096 },
                 "description": "Substrings that cause an argument to be rejected."
+              },
+              "args": {
+                "type": "array",
+                "maxItems": 128,
+                "description": "Typed per-tool argument rules. When present, this is the complete argument allowlist.",
+                "items": {
+                  "type": "object",
+                  "required": ["name", "type"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+                    "type": { "enum": ["string", "boolean", "number", "integer", "object", "array"] },
+                    "required": { "type": "boolean", "default": false },
+                    "max_length": { "type": "integer", "minimum": 0, "maximum": 65536 },
+                    "pattern": { "type": "string", "maxLength": 4096 },
+                    "redact": { "type": "boolean", "default": false }
+                  }
+                }
               },
               "max_arg_length": {
                 "type": "integer",
-                "minimum": 1,
+                "minimum": 0,
+                "maximum": 65536,
                 "default": 4096,
                 "description": "Maximum length for any single argument value."
               }
@@ -108,6 +135,7 @@
         },
         "deny": {
           "type": "array",
+          "maxItems": 4096,
           "description": "Tools explicitly denied. Deny always wins.",
           "items": {
             "type": "object",
@@ -115,7 +143,9 @@
             "additionalProperties": false,
             "properties": {
               "name": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
               }
             }
           }

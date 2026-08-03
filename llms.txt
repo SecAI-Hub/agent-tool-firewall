@@ -21,13 +21,15 @@ that agent can call.
 - Path arguments are canonicalized and checked against allow/deny globs
 - Path traversal (../) and null-byte injection are caught
 - Arguments validated against max-length and blocked-pattern lists
-- Sliding-window rate limiter (default 120 req/min)
+- Per-tool typed argument contracts form a complete argument allowlist;
+  undeclared execution, network, content, and path fields fail closed
+- Process-wide token-bucket limiter (default 120 req/min, burst 20)
 
 ## API
 
-- `GET  /health`       — health check + counters
-- `POST /v1/evaluate`  — evaluate a tool call
-- `GET  /v1/stats`     — aggregated stats
+- `GET  /health`       — minimal unauthenticated liveness check
+- `POST /v1/evaluate`  — evaluate a tool call (Bearer auth)
+- `GET  /v1/stats`     — aggregated stats (Bearer auth)
 - `POST /v1/reload`    — hot-reload policy (Bearer auth)
 
 ## Configuration (env vars)
@@ -35,7 +37,8 @@ that agent can call.
 - BIND_ADDR (default 127.0.0.1:8475)
 - POLICY_PATH (default /etc/secure-ai/policy/policy.yaml)
 - AUDIT_LOG_PATH (default /var/lib/secure-ai/logs/tool-firewall-audit.jsonl)
-- SERVICE_TOKEN_PATH (optional, for /v1/reload auth)
+- SERVICE_TOKEN_PATH (default /run/secure-ai/service-token; required at startup)
+- ALLOW_REMOTE_BIND (exact true required for a non-loopback BIND_ADDR)
 
 ## Use cases
 
@@ -44,7 +47,7 @@ that agent can call.
 
 ## Tech
 
-- Go 1.23, single binary, zero CGO, ~500 lines
+- Go 1.25 or newer (CI uses Go 1.26.5), single binary, zero CGO
 - Only dependency: gopkg.in/yaml.v3
 - Container: Alpine-based, runs as non-root (UID 65534)
 - Part of SecAI OS (https://github.com/SecAI-Hub/SecAI_OS)
