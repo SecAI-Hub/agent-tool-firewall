@@ -19,12 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.5"
+          go-version: "1.27.1"
           cache-dependency-path: go.sum
 
       - name: Verify dependency graph
@@ -57,7 +57,7 @@ jobs:
       - name: Validate workflows and immutable action pins
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE:/repo:ro" -w /repo \
-            rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
+            rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
           bad_pins="$(grep -R -n -E '^[[:space:]]*- uses:' .github/workflows \
             | grep -E -v '@[0-9a-f]{40}([[:space:]]*(#.*)?)$' || true)"
           test -z "$bad_pins"
@@ -79,7 +79,7 @@ jobs:
 
       - name: Vulnerability check
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           govulncheck ./...
 
   secrets:
@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -105,7 +105,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Build image
@@ -122,7 +122,7 @@ jobs:
           trap cleanup EXIT
           docker volume create "$credential_volume" >/dev/null
           docker run --rm -v "$credential_volume:/data" \
-            docker.io/library/alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40 \
+            docker.io/library/alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
             sh -c 'chown 65534:65534 /data; chmod 700 /data; umask 077; head -c 48 /dev/urandom | base64 | tr -d "\n" > /data/service-token; head -c 48 /dev/urandom | base64 | tr -d "\n" > /data/admin-token; chown 65534:65534 /data/service-token /data/admin-token'
           docker run -d --name "$container_name" -p 127.0.0.1:18475:8475 \
             --read-only --cap-drop=ALL --security-opt=no-new-privileges \
@@ -136,10 +136,10 @@ jobs:
             sleep 1
           done
           token="$(docker run --rm -v "$credential_volume:/data:ro" \
-            docker.io/library/alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40 \
+            docker.io/library/alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
             cat /data/service-token)"
           admin_token="$(docker run --rm -v "$credential_volume:/data:ro" \
-            docker.io/library/alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40 \
+            docker.io/library/alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
             cat /data/admin-token)"
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18475/v1/stats)" = "401"
           curl --fail --silent -H "Authorization: Bearer $token" http://127.0.0.1:18475/v1/stats >/dev/null
